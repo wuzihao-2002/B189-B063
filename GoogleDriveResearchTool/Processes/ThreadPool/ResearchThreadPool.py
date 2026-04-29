@@ -1,0 +1,162 @@
+import queue
+import threading
+import traceback
+from concurrent.futures.thread import ThreadPoolExecutor
+from time import sleep
+
+from Common import LogHelper
+from Processes import DriveFilesInfoGet
+
+
+class ResearchThreadPool(ThreadPoolExecutor):
+
+    def __init__(self, max_workers, max_tasks=300, target=None):
+        self.init_thread_pool(max_workers)
+        self.max_workers = max_workers
+        self.folder_work_queue = queue.LifoQueue(maxsize=max_tasks)
+        self.target = target
+        self.exit = False
+        self.thread = None
+        self.target_method = None
+        self.suspend = False
+        self.stop = False
+        self.mutex = threading.Lock()
+        self.working_count = 0
+
+    def init_thread_pool(self, max_workers):
+        LogHelper.info("ThreadPool（Max Threads: %d）を作成します。" % max_workers)
+        super().__init__(max_workers=max_workers)
+        self.max_workers = max_workers
+        LogHelper.info("ThreadPool（Max Threads: %d）を作成しました。" % max_workers)
+
+    def set_target(self, target_method):
+        """
+            set thread task method
+        :param target_method:
+        :return:
+        """
+        self.target_method = target_method
+        self.target = self.target_wrapper
+
+    def target_wrapper(self, *args, **kwargs):
+        """
+            wrapper target method
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        try:
+            self.target_method(*args, **kwargs)
+        except Exception as e:
+            LogHelper.error("Target Method Execute Err: %s" % e)
+            LogHelper.error(traceback.format_exc())
+            DriveFilesInfoGet.exception_interrupt = True
+
+        with self.mutex:
+            self.working_count -= 1
+
+    def add_work(self, work):
+        """
+            add task to work queue
+        :param work:
+        :return:
+        """
+        if not self.exit:
+            with self.mutex:
+                self.working_count += 1
+
+            self.folder_work_queue.put(work)
+
+    def _submit(self, args):
+        """
+            submit task
+        :param args:
+        :return:
+        """
+        while True:
+            if self.exit:
+                return
+
+            with self.mutex:
+                if not self.suspend:
+                    super().submit(self.target, args)
+                    return
+
+            sleep(1)
+
+    def run(self):
+        """
+            task [worker] begin
+        :return:
+        """
+        self.thread = threading.Thread(target=self.worker)
+        self.thread.setDaemon(True)
+        self.thread.start()
+
+    def worker(self):
+        """
+            take work_queue's task to threadPool
+        :return:
+        """
+        try:
+            while True:
+                if self.exit:
+                    return
+
+                while not self.folder_work_queue.empty():
+                    if DriveFilesInfoGet.exception_interrupt:
+                        return
+
+                    while self._work_queue.qsize() > 10:
+                        sleep(0.1)
+
+                    task = self.folder_work_queue.get()
+                    if task is not None:
+                        self._submit(task)
+
+                    if self.exit:
+                        return
+        except Exception as e:
+            LogHelper.error("ThreadPool Execute Err: %s" % e)
+            LogHelper.error(traceback.format_exc())
+            DriveFilesInfoGet.exception_interrupt = True
+
+    def stop_task(self, wait=True):
+        """
+            stop task
+        :param wait:
+        :return:
+        """
+        self.exit = True
+
+        while self.thread is not None and self.thread.is_alive():
+            sleep(1)
+        super().shutdown(wait)
+        self.stop = True
+
+    def state(self):
+        """
+            return thread pool state
+                true: at work
+                false: at rest
+        :return:
+        """
+        with self.mutex:
+            state = (self.working_count > 0 and not self.exit) or self.suspend
+        return state
+
+    def reset(self, max_workers):
+        """
+            Reinitialize the thread pool
+        :param max_workers:
+        :return:
+        """
+        if self.stop:
+            return
+
+        super().shutdown(True)
+        self.init_thread_pool(max_workers)
+
+    def set_suspend(self, suspend):
+        with self.mutex:
+            self.suspend = suspend
