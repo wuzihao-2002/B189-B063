@@ -221,7 +221,11 @@ class ResearchSQLite:
             TsvItemEnum.URI.value: record[mapper["uri"]],
             TsvItemEnum.PARENT_FOLDER.value: record[mapper["parent_folder"]],
             TsvItemEnum.PARENT_URI.value: record[mapper["parent_uri"]],
-            TsvItemEnum.WRITERS_CAN_SHARE.value: True if record[mapper["writers_can_share"]] else False,
+            TsvItemEnum.WRITERS_CAN_SHARE.value: (
+                True if record[mapper["writers_can_share"]] == 1 else
+                False if record[mapper["writers_can_share"]] == 0 else
+                record[mapper["writers_can_share"]]
+            ),
             TsvItemEnum.DOMAIN.value: record[mapper["domain"]],
             TsvItemEnum.OWNER.value: record[mapper["owner"]],
             TsvItemEnum.WRITER.value: record[mapper["writer"]],

@@ -2,6 +2,7 @@ import datetime
 import re
 import threading
 import traceback
+import unicodedata
 from collections import defaultdict
 
 from pytz import timezone
@@ -341,14 +342,16 @@ class GoogleDriveFolderIterator:
             # some items were not retrieved
             if warn_info_list:
                 LogHelper.warn(GET_FILE_INFO_FAILED_LOG % (file_name, uri, '、'.join(warn_info_list)))
-                self.warn_count += 1
+                with self.atomic_lock:
+                    self.warn_count += 1
 
             if err_info_list or permission_denied:
                 if err_info_list:
                     LogHelper.err_logger_error(GET_FILE_INFO_FAILED_LOG % (file_name, uri, '、'.join(err_info_list)))
                 if permission_denied:
                     LogHelper.err_logger_error(PERMISSION_DENIED_ERROR_LOG % (file_name, uri))
-                self.err_count += 1
+                with self.atomic_lock:
+                    self.err_count += 1
 
     def modify_info_get(self, file, file_detail, warn_info_list, err_info_list):
         """
@@ -435,8 +438,12 @@ class GoogleDriveFolderIterator:
                     email = self.get_json_item(permission, "emailAddress")
                     display_name = self.get_json_item(permission, "displayName")
                     role = self.get_json_item(permission, "role")
+                    view = self.get_json_item(permission, "view")
                     if role == "owner":
                         is_contain_owner = True
+
+                    if view == "metadata":
+                        continue
 
                     if not self.is_none_or_empty(email):
                         if permission_type != "anyone":
@@ -576,11 +583,18 @@ class GoogleDriveFolderIterator:
             count = self.set_account_record_dic[email]["count"]
             name = self.set_account_record_dic[email]["name"]
             format_account = "%s(%s)" % (email, "????" if name is None else name)
-            length = len(format_account.encode("Shift_JIS"))
+            length = self.display_width(format_account)
             format_account_info_list.append({"account": format_account, "file_count": count, "name_len": length})
             max_length = max(length, max_length)
 
         return format_account_info_list, max_length
+
+    @staticmethod
+    def display_width(text):
+        width = 0
+        for ch in text:
+            width += 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+        return width
 
     @staticmethod
     def get_json_item(json_dic, item_name):
