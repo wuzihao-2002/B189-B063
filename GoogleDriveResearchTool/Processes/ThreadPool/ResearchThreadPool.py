@@ -105,6 +105,7 @@ class ResearchThreadPool(ThreadPoolExecutor):
 
                 while not self.folder_work_queue.empty():
                     if DriveFilesInfoGet.exception_interrupt:
+                        self.clear_pending_work()
                         return
 
                     while self._work_queue.qsize() > 10:
@@ -120,6 +121,7 @@ class ResearchThreadPool(ThreadPoolExecutor):
             LogHelper.error("ThreadPool Execute Err: %s" % e)
             LogHelper.error(traceback.format_exc())
             DriveFilesInfoGet.exception_interrupt = True
+            self.clear_pending_work()
 
     def stop_task(self, wait=True):
         """
@@ -128,11 +130,32 @@ class ResearchThreadPool(ThreadPoolExecutor):
         :return:
         """
         self.exit = True
-
-        while self.thread is not None and self.thread.is_alive():
-            sleep(1)
-        super().shutdown(wait)
         self.stop = True
+        self.clear_pending_work()
+
+        if wait:
+            while self.thread is not None and self.thread.is_alive():
+                sleep(1)
+            super().shutdown(wait)
+        else:
+            super().shutdown(wait=False, cancel_futures=True)
+
+    def clear_pending_work(self):
+        """
+            clear queued tasks that will not be submitted
+        :return:
+        """
+        cleared_count = 0
+        while True:
+            try:
+                self.folder_work_queue.get_nowait()
+                cleared_count += 1
+            except queue.Empty:
+                break
+
+        if cleared_count > 0:
+            with self.mutex:
+                self.working_count = max(0, self.working_count - cleared_count)
 
     def state(self):
         """

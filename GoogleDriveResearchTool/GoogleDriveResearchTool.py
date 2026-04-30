@@ -368,6 +368,12 @@ if __name__ == "__main__":
         LogHelper.error(traceback.format_exc())
 
     finally:
+        if researchThreadPool is not None and not researchThreadPool.stop:
+            researchThreadPool.stop_task(wait=False)
+
+        if researchSqlite is not None:
+            researchSqlite.stop_task()
+
         # after program end, remove the current terminal file
         if threads_auto_stat is not None:
             threads_auto_stat.remove_terminal_file()

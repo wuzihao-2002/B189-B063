@@ -17,6 +17,7 @@ class ResearchSQLite:
     def __init__(self, db_path):
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.lock = threading.Lock()
         self.research_exit = False
         self.commit_thread = None
         self.research_folder_mapper = None
@@ -28,7 +29,8 @@ class ResearchSQLite:
         init_command += SqlCommand.create_tbl_research_folder_sql
         init_command += SqlCommand.vacuum_sql
 
-        self.conn.executescript(init_command)
+        with self.lock:
+            self.conn.executescript(init_command)
 
     def re_init(self):
         self.conn.close()
@@ -46,7 +48,8 @@ class ResearchSQLite:
                     insert_sql = SqlCommand.insert_file_detail_sql
                 else:
                     insert_sql = SqlCommand.insert_research_folder_sql
-                self.conn.execute(insert_sql, data.get_values())
+                with self.lock:
+                    self.conn.execute(insert_sql, data.get_values())
         except Exception as e:
             LogHelper.error("Sqlite insert Err:%s" % e)
             LogHelper.error(traceback.format_exc())
@@ -60,11 +63,13 @@ class ResearchSQLite:
         """
         try:
             gt_id_select_sql = SqlCommand.select_research_folder_by_id_gt_sql
-            cursor = self.conn.execute(gt_id_select_sql, [gt_id])
-            if self.research_folder_mapper is None and cursor.description is not None:
-                self.research_folder_mapper = self.get_cursor_mapper(cursor.description)
+            with self.lock:
+                cursor = self.conn.execute(gt_id_select_sql, [gt_id])
+                if self.research_folder_mapper is None and cursor.description is not None:
+                    self.research_folder_mapper = self.get_cursor_mapper(cursor.description)
+                records = cursor.fetchall()
 
-            for record in cursor:
+            for record in records:
                 if self.research_exit:
                     return
                 research_folder = ResearchFolder()
@@ -77,12 +82,14 @@ class ResearchSQLite:
 
     def research_folder_record_count(self):
         max_id_select_sql = SqlCommand.select_research_folder_max_id_sql
-        cursor = self.conn.execute(max_id_select_sql)
-        record = cursor.fetchone()
+        with self.lock:
+            cursor = self.conn.execute(max_id_select_sql)
+            record = cursor.fetchone()
         return record[0]
 
     def commit(self):
-        self.conn.commit()
+        with self.lock:
+            self.conn.commit()
 
     def _auto_commit(self, second):
         """
@@ -125,7 +132,8 @@ class ResearchSQLite:
         """
         self.stop_task()
 
-        self.conn.close()
+        with self.lock:
+            self.conn.close()
 
     def file_info_to_tsv(self, gid, output_file):
         """
